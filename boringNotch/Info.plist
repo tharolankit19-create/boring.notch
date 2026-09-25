@@ -15,8 +15,6 @@
 	<true/>
 	<key>SUFeedURL</key>
 	<string>https://raw.githubusercontent.com/tharolankit19-create/boring.notch/main/updater/appcast-notchsignal.xml</string>
-	<key>SUPublicEDKey</key>
-	<string>B1Y47t8C/v8ImurYA+9arEsuCrpxwJSviekiflMElbI=</string>
 	<key>UTImportedTypeDeclarations</key>
 	<array>
 		<dict/>
