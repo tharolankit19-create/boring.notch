@@ -85,7 +85,7 @@ protocol AgentProvider {
     var displayName: String { get }
 
     func detectSessions(in snapshot: AgentRuntimeSnapshot) -> [AgentSession]
-    func openSession(_ session: AgentSession)
+    @MainActor func openSession(_ session: AgentSession)
 }
 
 struct ClaudeCodeProvider: AgentProvider {
