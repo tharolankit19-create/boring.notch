@@ -1,0 +1,85 @@
+name: NotchSignal Universal DMG Smoke Build
+
+on:
+  push:
+    branches:
+      - feat/notchsignal-agent-center
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: notchsignal-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  universal-dmg:
+    name: Build unsigned universal DMG
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          uname -a
+
+      - name: Resolve packages
+        run: xcodebuild -resolvePackageDependencies -project boringNotch.xcodeproj
+
+      - name: Build universal Release app
+        run: |
+          set -euo pipefail
+          xcodebuild             -project boringNotch.xcodeproj             -scheme boringNotch             -configuration Release             -derivedDataPath "$PWD/build"             -destination "generic/platform=macOS"             ARCHS="arm64 x86_64"             ONLY_ACTIVE_ARCH=NO             CODE_SIGNING_ALLOWED=NO             CODE_SIGNING_REQUIRED=NO             DEVELOPMENT_TEAM=""             build
+
+      - name: Verify universal binaries and bundle identity
+        run: |
+          set -euo pipefail
+          APP="$PWD/build/Build/Products/Release/NotchSignal.app"
+          test -d "$APP"
+          test -x "$APP/Contents/MacOS/NotchSignal"
+          echo "App architectures: $(lipo -archs "$APP/Contents/MacOS/NotchSignal")"
+          APP_ARCHS="$(lipo -archs "$APP/Contents/MacOS/NotchSignal")"
+          grep -q "arm64" <<<"$APP_ARCHS"
+          grep -q "x86_64" <<<"$APP_ARCHS"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist")" = "com.tharolankit.notchsignal"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP/Contents/Info.plist")" = "NotchSignal"
+
+          XPC="$APP/Contents/XPCServices/BoringNotchXPCHelper.xpc/Contents/MacOS/BoringNotchXPCHelper"
+          if [[ -x "$XPC" ]]; then
+            echo "XPC architectures: $(lipo -archs "$XPC")"
+            XPC_ARCHS="$(lipo -archs "$XPC")"
+            grep -q "arm64" <<<"$XPC_ARCHS"
+            grep -q "x86_64" <<<"$XPC_ARCHS"
+          fi
+
+      - name: Create DMG
+        run: |
+          set -euo pipefail
+          APP="$PWD/build/Build/Products/Release/NotchSignal.app"
+          STAGE="$RUNNER_TEMP/notchsignal-dmg"
+          mkdir -p "$STAGE"
+          ditto "$APP" "$STAGE/NotchSignal.app"
+          ln -s /Applications "$STAGE/Applications"
+          mkdir -p dist
+          hdiutil create             -volname "NotchSignal"             -srcfolder "$STAGE"             -ov             -format UDZO             "dist/NotchSignal-unsigned.dmg"
+          hdiutil verify "dist/NotchSignal-unsigned.dmg"
+          shasum -a 256 "dist/NotchSignal-unsigned.dmg" | tee "dist/NotchSignal-unsigned.dmg.sha256"
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: NotchSignal-unsigned-dmg
+          path: |
+            dist/NotchSignal-unsigned.dmg
+            dist/NotchSignal-unsigned.dmg.sha256
+          if-no-files-found: error
+          retention-days: 14
