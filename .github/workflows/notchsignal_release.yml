@@ -1,0 +1,194 @@
+name: NotchSignal Signed Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, e.g. 0.1.0"
+        required: true
+        type: string
+      release_notes:
+        description: "Short release notes"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Sign, notarize, publish and gate DMG
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      APP_NAME: NotchSignal
+      BUNDLE_ID: com.tharolankit.notchsignal
+      DOWNLOAD_BUCKET: notchsignal-releases
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Validate release inputs and secrets
+        env:
+          VERSION: ${{ inputs.version }}
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]] || { echo "::error::Invalid version"; exit 1; }
+          for name in BUILD_CERTIFICATE_BASE64 P12_PASSWORD KEYCHAIN_PASSWORD APPLE_ID APPLE_TEAM_ID APPLE_APP_SPECIFIC_PASSWORD SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY; do
+            [[ -n "${!name:-}" ]] || { echo "::error::Missing required secret: $name"; exit 1; }
+          done
+
+      - name: Import Developer ID certificate
+        id: signing
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          CERT_PATH="$RUNNER_TEMP/notchsignal-release.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/notchsignal-signing.keychain-db"
+          printf '%s' "$BUILD_CERTIFICATE_BASE64" | base64 --decode > "$CERT_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | awk '/Developer ID Application/{print $2; exit}')"
+          [[ -n "$IDENTITY" ]] || { echo "::error::No Developer ID Application identity found"; exit 1; }
+          echo "identity=$IDENTITY" >> "$GITHUB_OUTPUT"
+          echo "keychain=$KEYCHAIN_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve Swift packages
+        run: xcodebuild -resolvePackageDependencies -project boringNotch.xcodeproj
+
+      - name: Build signed universal Release app
+        env:
+          VERSION: ${{ inputs.version }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          SIGNING_IDENTITY: ${{ steps.signing.outputs.identity }}
+        run: |
+          set -euo pipefail
+          xcodebuild             -project boringNotch.xcodeproj             -scheme boringNotch             -configuration Release             -derivedDataPath "$PWD/build-release"             -destination "generic/platform=macOS"             ARCHS="arm64 x86_64"             ONLY_ACTIVE_ARCH=NO             MARKETING_VERSION="$VERSION"             CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER"             PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID"             DEVELOPMENT_TEAM="$APPLE_TEAM_ID"             CODE_SIGN_STYLE=Manual             CODE_SIGN_IDENTITY="$SIGNING_IDENTITY"             ENABLE_HARDENED_RUNTIME=YES             OTHER_CODE_SIGN_FLAGS="--timestamp"             build
+
+      - name: Verify app signature and universal architecture
+        run: |
+          set -euo pipefail
+          APP="$PWD/build-release/Build/Products/Release/NotchSignal.app"
+          test -d "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          APP_ARCHS="$(lipo -archs "$APP/Contents/MacOS/NotchSignal")"
+          echo "NotchSignal architectures: $APP_ARCHS"
+          grep -q "arm64" <<<"$APP_ARCHS"
+          grep -q "x86_64" <<<"$APP_ARCHS"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist")" = "$BUNDLE_ID"
+
+      - name: Create and sign DMG
+        env:
+          VERSION: ${{ inputs.version }}
+          SIGNING_IDENTITY: ${{ steps.signing.outputs.identity }}
+        run: |
+          set -euo pipefail
+          APP="$PWD/build-release/Build/Products/Release/NotchSignal.app"
+          STAGE="$RUNNER_TEMP/notchsignal-dmg"
+          mkdir -p "$STAGE" dist
+          ditto "$APP" "$STAGE/NotchSignal.app"
+          ln -s /Applications "$STAGE/Applications"
+          DMG="dist/NotchSignal-${VERSION}.dmg"
+          hdiutil create -volname "NotchSignal" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
+          codesign --force --timestamp --sign "$SIGNING_IDENTITY" "$DMG"
+          codesign --verify --verbose=2 "$DMG"
+          shasum -a 256 "$DMG" | tee "$DMG.sha256"
+
+      - name: Notarize and staple
+        env:
+          VERSION: ${{ inputs.version }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          set -euo pipefail
+          DMG="dist/NotchSignal-${VERSION}.dmg"
+          xcrun notarytool submit "$DMG"             --apple-id "$APPLE_ID"             --team-id "$APPLE_TEAM_ID"             --password "$APPLE_APP_SPECIFIC_PASSWORD"             --wait
+          xcrun stapler staple "$DMG"
+          xcrun stapler validate "$DMG"
+          spctl --assess --type open --context context:primary-signature -vv "$DMG"
+
+      - name: Mount and verify installed app
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          DMG="dist/NotchSignal-${VERSION}.dmg"
+          MOUNT="$RUNNER_TEMP/notchsignal-mount"
+          mkdir -p "$MOUNT"
+          hdiutil attach "$DMG" -mountpoint "$MOUNT" -nobrowse
+          trap 'hdiutil detach "$MOUNT" || true' EXIT
+          codesign --verify --deep --strict --verbose=2 "$MOUNT/NotchSignal.app"
+          spctl --assess --type execute -vv "$MOUNT/NotchSignal.app"
+
+      - name: Publish corresponding GPL source tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          NOTES: ${{ inputs.release_notes }}
+        run: |
+          set -euo pipefail
+          TAG="notchsignal-v$VERSION"
+          git tag "$TAG" "$GITHUB_SHA"
+          git push origin "$TAG"
+          gh release create "$TAG"             --repo "$GITHUB_REPOSITORY"             --target "$GITHUB_SHA"             --title "NotchSignal v$VERSION — source"             --notes "$NOTES
+
+Corresponding source for the paid NotchSignal binary. The binary is distributed through the verified purchaser download flow. Licensed under GPL-3.0."
+
+      - name: Upload notarized DMG to private storage
+        env:
+          VERSION: ${{ inputs.version }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -euo pipefail
+          DMG="dist/NotchSignal-${VERSION}.dmg"
+          OBJECT="NotchSignal-${VERSION}.dmg"
+          curl --fail-with-body --silent --show-error             -X POST             -H "apikey: $SUPABASE_SERVICE_ROLE_KEY"             -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY"             -H "Content-Type: application/x-apple-diskimage"             -H "x-upsert: true"             --data-binary @"$DMG"             "$SUPABASE_URL/storage/v1/object/$DOWNLOAD_BUCKET/$OBJECT"
+
+      - name: Publish verified release manifest
+        env:
+          VERSION: ${{ inputs.version }}
+          NOTES: ${{ inputs.release_notes }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -euo pipefail
+          DMG="dist/NotchSignal-${VERSION}.dmg"
+          SHA256="$(shasum -a 256 "$DMG" | awk '{print $1}')"
+          OBJECT="NotchSignal-${VERSION}.dmg"
+          SOURCE_URL="https://github.com/$GITHUB_REPOSITORY/releases/tag/notchsignal-v$VERSION"
+          BODY="$(jq -n             --arg version "$VERSION"             --arg object "$OBJECT"             --arg sha "$SHA256"             --arg notes "$NOTES"             --arg source "$SOURCE_URL"             '{p_version:$version,p_storage_object:$object,p_sha256:$sha,p_release_notes:$notes,p_source_url:$source,p_minimum_macos:"14.0",p_architectures:["arm64","x86_64"]}')"
+          curl --fail-with-body --silent --show-error             -X POST             -H "apikey: $SUPABASE_SERVICE_ROLE_KEY"             -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY"             -H "Content-Type: application/json"             --data "$BODY"             "$SUPABASE_URL/rest/v1/rpc/notchsignal_publish_release"
+
+      - name: Upload notarized release artifact for audit
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: NotchSignal-${{ inputs.version }}-notarized
+          path: |
+            dist/NotchSignal-${{ inputs.version }}.dmg
+            dist/NotchSignal-${{ inputs.version }}.dmg.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Clean signing keychain
+        if: always()
+        env:
+          KEYCHAIN_PATH: ${{ steps.signing.outputs.keychain }}
+        run: |
+          [[ -n "${KEYCHAIN_PATH:-}" ]] && security delete-keychain "$KEYCHAIN_PATH" || true
