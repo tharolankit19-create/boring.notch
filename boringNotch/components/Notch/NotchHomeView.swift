@@ -419,27 +419,97 @@ struct VolumeControlView: View {
 // MARK: - Main View
 
 struct NotchHomeView: View {
+    private enum PrimarySection: String {
+        case agents = "Agents"
+        case utilities = "Utilities"
+
+        var symbol: String {
+            switch self {
+            case .agents: "waveform.path.ecg"
+            case .utilities: "square.grid.2x2"
+            }
+        }
+    }
+
     @EnvironmentObject var vm: BoringViewModel
     @ObservedObject var webcamManager = WebcamManager.shared
     @ObservedObject var batteryModel = BatteryStatusViewModel.shared
     @ObservedObject var coordinator = BoringViewCoordinator.shared
+    @ObservedObject var agentMonitor = AgentMonitor.shared
+    @State private var primarySection: PrimarySection = .agents
     let albumArtNamespace: Namespace.ID
 
     var body: some View {
         Group {
             if !coordinator.firstLaunch {
-                mainContent
+                VStack(spacing: 8) {
+                    sectionHeader
+
+                    Group {
+                        switch primarySection {
+                        case .agents:
+                            AgentCenterView()
+                        case .utilities:
+                            legacyUtilities
+                        }
+                    }
+                    .transition(.opacity)
+                }
             }
         }
-        // simplified: use a straightforward opacity transition
         .transition(.opacity)
+    }
+
+    private var sectionHeader: some View {
+        HStack(spacing: 4) {
+            sectionButton(.agents)
+            sectionButton(.utilities)
+
+            Spacer()
+
+            if primarySection == .agents {
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(agentMonitor.sessions.contains(where: { $0.status == .working }) ? Color.green : Color.secondary)
+                        .frame(width: 5, height: 5)
+                    Text("Local")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityLabel("Agent monitoring stays local on this Mac")
+            }
+        }
+        .padding(.horizontal, 2)
+    }
+
+    private func sectionButton(_ section: PrimarySection) -> some View {
+        Button {
+            withAnimation(.snappy(duration: 0.2)) {
+                primarySection = section
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: section.symbol)
+                Text(section.rawValue)
+            }
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(primarySection == section ? .white : .secondary)
+            .padding(.horizontal, 9)
+            .frame(height: 24)
+            .background(
+                primarySection == section ? Color.white.opacity(0.10) : Color.clear,
+                in: Capsule()
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(section.rawValue)
     }
 
     private var shouldShowCamera: Bool {
         Defaults[.showMirror] && webcamManager.cameraAvailable && vm.isCameraExpanded
     }
 
-    private var mainContent: some View {
+    private var legacyUtilities: some View {
         HStack(alignment: .top, spacing: (shouldShowCamera && Defaults[.showCalendar]) ? 10 : 15) {
             MusicPlayerView(albumArtNamespace: albumArtNamespace)
 
