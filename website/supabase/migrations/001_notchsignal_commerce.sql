@@ -82,3 +82,41 @@ end;
 $$;
 revoke all on function public.notchsignal_process_payment(text,text,text,text,integer,text,text,text) from public;
 grant execute on function public.notchsignal_process_payment(text,text,text,text,integer,text,text,text) to service_role;
+
+
+create or replace function public.notchsignal_publish_release(
+  p_version text,
+  p_storage_object text,
+  p_sha256 text,
+  p_release_notes text,
+  p_source_url text,
+  p_minimum_macos text,
+  p_architectures text[]
+) returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update public.notchsignal_releases set is_current = false where is_current = true;
+
+  insert into public.notchsignal_releases (
+    version, storage_object, sha256, release_notes, source_url,
+    minimum_macos, architectures, is_current
+  ) values (
+    p_version, p_storage_object, lower(p_sha256), p_release_notes, p_source_url,
+    p_minimum_macos, p_architectures, true
+  )
+  on conflict (version) do update set
+    storage_object = excluded.storage_object,
+    sha256 = excluded.sha256,
+    release_notes = excluded.release_notes,
+    source_url = excluded.source_url,
+    minimum_macos = excluded.minimum_macos,
+    architectures = excluded.architectures,
+    is_current = true;
+end;
+$$;
+
+revoke all on function public.notchsignal_publish_release(text,text,text,text,text,text,text[]) from public;
+grant execute on function public.notchsignal_publish_release(text,text,text,text,text,text,text[]) to service_role;
