@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { NextResponse } from "next/server";
 import { checkoutSessionFromCookie, verifyAccessToken } from "@/lib/access";
-import { analyticsEvent, privateDownloadURL, purchaseByCheckoutSession, purchaseByEmail } from "@/lib/db";
+import { analyticsEvent, currentRelease, privateDownloadURL, purchaseByCheckoutSession, purchaseByEmail } from "@/lib/db";
 export const runtime = "nodejs";
 
 export async function GET(request: Request) {
@@ -13,8 +13,11 @@ export async function GET(request: Request) {
       : sessionId ? await purchaseByCheckoutSession(sessionId) : null;
     if (!purchase) return NextResponse.json({ error: "Purchase access required." }, { status: 403 });
 
-    await analyticsEvent("download_started", crypto.randomUUID(), purchase.id, purchase.product_version);
-    return NextResponse.redirect(await privateDownloadURL(), { status: 302 });
+    const release = await currentRelease();
+    if (!release) return NextResponse.json({ error: "No signed release is published yet." }, { status: 503 });
+
+    await analyticsEvent("download_started", crypto.randomUUID(), purchase.id, release.version);
+    return NextResponse.redirect(await privateDownloadURL(release.storage_object), { status: 302 });
   } catch (error) {
     console.error("download_failed", error);
     return NextResponse.json({ error: "Download is temporarily unavailable." }, { status: 503 });
