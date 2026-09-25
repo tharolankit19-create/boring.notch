@@ -20,5 +20,10 @@ import Foundation
     func isScreenBrightnessAvailable(with reply: @escaping (Bool) -> Void)
     func currentScreenBrightness(with reply: @escaping (NSNumber?) -> Void)
     func setScreenBrightness(_ value: Float, with reply: @escaping (Bool) -> Void)
+
+    // NotchSignal local agent monitoring. Payloads intentionally contain only
+    // process/session metadata, never prompts, source code, or tool payloads.
+    func agentSnapshot(with reply: @escaping (NSData) -> Void)
+    func installClaudeHooks(with reply: @escaping (NSDictionary) -> Void)
 }
 
