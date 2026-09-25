@@ -33,9 +33,25 @@ create table if not exists public.notchsignal_events (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.notchsignal_releases (
+  version text primary key,
+  storage_object text not null unique,
+  sha256 text not null,
+  release_notes text not null default '',
+  source_url text not null,
+  minimum_macos text not null default '14.0',
+  architectures text[] not null default array['arm64','x86_64'],
+  is_current boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+create unique index if not exists notchsignal_one_current_release
+  on public.notchsignal_releases (is_current) where is_current = true;
+
 alter table public.notchsignal_purchases enable row level security;
 alter table public.notchsignal_webhook_events enable row level security;
 alter table public.notchsignal_events enable row level security;
+alter table public.notchsignal_releases enable row level security;
 
 create or replace function public.notchsignal_process_payment(
   p_webhook_id text, p_email text, p_payment_id text, p_checkout_session_id text,
