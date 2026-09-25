@@ -889,7 +889,8 @@ struct About: View {
             }
             VStack(spacing: 0) {
                 Divider()
-                Text("Made with 🫶🏻 by not so boring not.people")
+                Text("NotchSignal is a GPL-3.0 derivative of Boring Notch. Original notices and third-party licenses are retained.")
+                    .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(.top, 5)
                     .padding(.bottom, 7)
