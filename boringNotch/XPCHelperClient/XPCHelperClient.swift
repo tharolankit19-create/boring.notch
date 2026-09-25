@@ -5,7 +5,7 @@ import AsyncXPCConnection
 final class XPCHelperClient: NSObject {
     nonisolated static let shared = XPCHelperClient()
     
-    private let serviceName = "theboringteam.boringnotch.BoringNotchXPCHelper"
+    private let serviceName = "com.tharolankit.notchsignal.BoringNotchXPCHelper"
     
     private var remoteService: RemoteXPCService<BoringNotchXPCHelperProtocol>?
     private var connection: NSXPCConnection?
@@ -146,6 +146,44 @@ final class XPCHelperClient: NSObject {
         }
     }
     
+    // MARK: - Agent monitoring
+
+    struct ClaudeHookInstallResult {
+        let success: Bool
+        let error: String?
+    }
+
+    nonisolated func agentSnapshot() async -> Data? {
+        do {
+            let service = await MainActor.run { ensureRemoteService() }
+            let result: NSData = try await service.withContinuation { service, continuation in
+                service.agentSnapshot { payload in
+                    continuation.resume(returning: payload)
+                }
+            }
+            return result as Data
+        } catch {
+            return nil
+        }
+    }
+
+    nonisolated func installClaudeHooks() async -> ClaudeHookInstallResult {
+        do {
+            let service = await MainActor.run { ensureRemoteService() }
+            let result: NSDictionary = try await service.withContinuation { service, continuation in
+                service.installClaudeHooks { payload in
+                    continuation.resume(returning: payload)
+                }
+            }
+            return ClaudeHookInstallResult(
+                success: result["success"] as? Bool ?? false,
+                error: result["error"] as? String
+            )
+        } catch {
+            return ClaudeHookInstallResult(success: false, error: error.localizedDescription)
+        }
+    }
+
     // MARK: - Keyboard Brightness
     
     nonisolated func isKeyboardBrightnessAvailable() async -> Bool {
