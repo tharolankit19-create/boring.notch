@@ -61,8 +61,26 @@ export async function analyticsEvent(name: string, sessionId: string, purchaseId
     })
   });
 }
-export async function privateDownloadURL() {
-  const path = commerceConfig.objectPath.split("/").map(encodeURIComponent).join("/");
+export type ReleaseManifest = {
+  version: string;
+  storage_object: string;
+  sha256: string;
+  release_notes: string;
+  source_url: string;
+  minimum_macos: string;
+  architectures: string[];
+};
+
+export async function currentRelease(): Promise<ReleaseManifest | null> {
+  const rows = await rest<ReleaseManifest[]>(
+    "notchsignal_releases?select=version,storage_object,sha256,release_notes,source_url,minimum_macos,architectures&is_current=eq.true&limit=1"
+  );
+  return rows[0] ?? null;
+}
+
+export async function privateDownloadURL(storageObject?: string) {
+  const object = storageObject ?? commerceConfig.objectPath;
+  const path = object.split("/").map(encodeURIComponent).join("/");
   const response = await fetch(
     `${commerceConfig.supabaseUrl}/storage/v1/object/sign/${encodeURIComponent(commerceConfig.bucket)}/${path}`,
     {
