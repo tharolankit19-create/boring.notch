@@ -85,6 +85,7 @@ final class AgentMonitor: ObservableObject {
         providers.first { $0.id == session.providerID }
     }
 
+    @MainActor
     func open(_ session: AgentSession) {
         provider(for: session)?.openSession(session)
     }
