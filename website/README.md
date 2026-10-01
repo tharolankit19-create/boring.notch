@@ -6,7 +6,7 @@ Production landing, animated MacBook product demo, Dodo checkout, server-verifie
 
 1. Apply `supabase/migrations/001_notchsignal_commerce.sql`, `002_notchsignal_entitlement_revocation.sql`, and `003_notchsignal_rpc_lockdown.sql`.
 2. Create a **private** Supabase Storage bucket named `notchsignal-releases`.
-3. Create a Dodo one-time product priced at exactly USD $5 and set `DODO_NOTCHSIGNAL_PRODUCT_ID`.
+3. Create a Dodo **one-time, tax-inclusive** product whose buyer total is exactly USD $5 and set `DODO_NOTCHSIGNAL_PRODUCT_ID`. Checkout preflight rejects any other price/type.
 4. Configure Dodo webhook `POST /api/dodo/webhook` for `payment.succeeded`, `refund.succeeded`, and dispute lifecycle events.
 5. Configure all values from `.env.example` in the hosting platform.
 6. Configure Resend (or replace `lib/email.ts`) for purchase-access email.
@@ -18,6 +18,7 @@ Production landing, animated MacBook product demo, Dodo checkout, server-verifie
 ## Payment / download safety
 
 - Checkout is closed if no current signed release manifest exists, so a buyer cannot pay and then hit a missing-download error.
+- Before a checkout session is created, Dodo preview must confirm one one-time product, quantity 1, tax-inclusive USD $5.00; discounts and currency switching are disabled.
 - Dodo's browser return `session_id` is never trusted on its own; it is reconciled server-side.
 - Redirects never unlock downloads.
 - Webhooks are signature-verified with Dodo's SDK.
