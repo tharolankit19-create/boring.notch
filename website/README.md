@@ -4,7 +4,7 @@ Production landing, animated MacBook product demo, Dodo checkout, server-verifie
 
 ## Deployment
 
-1. Apply `supabase/migrations/001_notchsignal_commerce.sql`, `002_notchsignal_entitlement_revocation.sql`, `003_notchsignal_rpc_lockdown.sql`, and `004_notchsignal_release_object_gate.sql`.
+1. Apply `supabase/migrations/001_notchsignal_commerce.sql`, `002_notchsignal_entitlement_revocation.sql`, `003_notchsignal_rpc_lockdown.sql`, `004_notchsignal_release_object_gate.sql`, and `005_notchsignal_table_grants.sql`.
 2. Create a **private** Supabase Storage bucket named `notchsignal-releases`.
 3. Create a Dodo **one-time, tax-inclusive** product whose buyer total is exactly USD $5 and set `DODO_NOTCHSIGNAL_PRODUCT_ID`. Checkout preflight rejects any other price/type.
 4. Configure Dodo webhook `POST /api/dodo/webhook` for `payment.succeeded`, `refund.succeeded`, and dispute lifecycle events.
@@ -23,6 +23,7 @@ Production landing, animated MacBook product demo, Dodo checkout, server-verifie
 - Redirects never unlock downloads.
 - Webhooks are signature-verified with Dodo's SDK.
 - Commerce/release SECURITY DEFINER RPCs are executable only by the server-side `service_role`; browser roles cannot call them.
+- Browser roles also have their direct table/sequence privileges revoked for the NotchSignal commerce schema; RLS remains enabled as a second deny layer.
 - Delayed webhooks can be reconciled against Dodo server-side.
 - Product id, amount (500 minor units), currency (USD) and quantity are checked before purchase recording.
 - Webhook/purchase recording is atomic and replay-safe through Postgres.
