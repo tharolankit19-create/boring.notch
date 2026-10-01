@@ -82,9 +82,13 @@ export type ReleaseManifest = {
 };
 
 export async function currentRelease(): Promise<ReleaseManifest | null> {
-  const rows = await rest<ReleaseManifest[]>(
-    "notchsignal_releases?select=version,storage_object,sha256,release_notes,source_url,minimum_macos,architectures&is_current=eq.true&limit=1"
-  );
+  // Server-only RPC returns a release only when both the manifest and its private
+  // Storage object exist. Checkout and download therefore fail closed if a DMG is
+  // removed or a release publication is incomplete.
+  const rows = await rest<ReleaseManifest[]>("rpc/notchsignal_current_release", {
+    method: "POST",
+    body: "{}"
+  });
   return rows[0] ?? null;
 }
 
