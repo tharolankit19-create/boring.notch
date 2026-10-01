@@ -21,7 +21,8 @@ jobs:
   universal-dmg:
     name: Build unsigned universal DMG
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 35
+
 
     steps:
       - name: Checkout
@@ -32,13 +33,34 @@ jobs:
           xcodebuild -version
           uname -a
 
-      - name: Resolve packages
-        run: xcodebuild -resolvePackageDependencies -project boringNotch.xcodeproj
+      - name: Resolve packages deterministically
+        run: |
+          set -euo pipefail
+          SWIFT_PACKAGE_DIR="$RUNNER_TEMP/notchsignal-source-packages"
+
+          # GitHub's macOS images can occasionally retain half-created binary
+          # SwiftPM artifact directories (notably Lottie/Sparkle). This produces
+          # "already exists in file system" failures unrelated to our source.
+          rm -rf "$HOME/Library/Caches/org.swift.swiftpm/artifacts"
+          rm -rf "$SWIFT_PACKAGE_DIR"
+
+          resolve() {
+            xcodebuild               -resolvePackageDependencies               -project boringNotch.xcodeproj               -scheme boringNotch               -clonedSourcePackagesDirPath "$SWIFT_PACKAGE_DIR"               -onlyUsePackageVersionsFromResolvedFile
+          }
+
+          if ! resolve; then
+            echo "::warning::SwiftPM resolve failed once; clearing transient artifact cache and retrying."
+            rm -rf "$HOME/Library/Caches/org.swift.swiftpm/artifacts"
+            rm -rf "$SWIFT_PACKAGE_DIR"
+            sleep 2
+            resolve
+          fi
 
       - name: Build universal Release app
         run: |
           set -euo pipefail
-          xcodebuild             -project boringNotch.xcodeproj             -scheme boringNotch             -configuration Release             -derivedDataPath "$PWD/build"             -destination "generic/platform=macOS"             ARCHS="arm64 x86_64"             ONLY_ACTIVE_ARCH=NO             CODE_SIGNING_ALLOWED=NO             CODE_SIGNING_REQUIRED=NO             DEVELOPMENT_TEAM=""             build
+          SWIFT_PACKAGE_DIR="$RUNNER_TEMP/notchsignal-source-packages"
+          xcodebuild             -project boringNotch.xcodeproj             -scheme boringNotch             -configuration Release             -derivedDataPath "$PWD/build"             -clonedSourcePackagesDirPath "$SWIFT_PACKAGE_DIR"             -onlyUsePackageVersionsFromResolvedFile             -destination "generic/platform=macOS"             ARCHS="arm64 x86_64"             ONLY_ACTIVE_ARCH=NO             CODE_SIGNING_ALLOWED=NO             CODE_SIGNING_REQUIRED=NO             DEVELOPMENT_TEAM=""             build
 
       - name: Verify universal binaries and bundle identity
         run: |
@@ -46,26 +68,26 @@ jobs:
           APP="$PWD/build/Build/Products/Release/NotchSignal.app"
           test -d "$APP"
           test -x "$APP/Contents/MacOS/NotchSignal"
-          echo "App architectures: $(lipo -archs "$APP/Contents/MacOS/NotchSignal")"
           APP_ARCHS="$(lipo -archs "$APP/Contents/MacOS/NotchSignal")"
+          echo "App architectures: $APP_ARCHS"
           grep -q "arm64" <<<"$APP_ARCHS"
           grep -q "x86_64" <<<"$APP_ARCHS"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist")" = "com.tharolankit.notchsignal"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP/Contents/Info.plist")" = "NotchSignal"
 
           XPC="$APP/Contents/XPCServices/BoringNotchXPCHelper.xpc/Contents/MacOS/BoringNotchXPCHelper"
-          if [[ -x "$XPC" ]]; then
-            echo "XPC architectures: $(lipo -archs "$XPC")"
-            XPC_ARCHS="$(lipo -archs "$XPC")"
-            grep -q "arm64" <<<"$XPC_ARCHS"
-            grep -q "x86_64" <<<"$XPC_ARCHS"
-          fi
+          test -x "$XPC"
+          XPC_ARCHS="$(lipo -archs "$XPC")"
+          echo "XPC architectures: $XPC_ARCHS"
+          grep -q "arm64" <<<"$XPC_ARCHS"
+          grep -q "x86_64" <<<"$XPC_ARCHS"
 
-      - name: Create DMG
+      - name: Create and verify DMG
         run: |
           set -euo pipefail
           APP="$PWD/build/Build/Products/Release/NotchSignal.app"
           STAGE="$RUNNER_TEMP/notchsignal-dmg"
+          rm -rf "$STAGE"
           mkdir -p "$STAGE"
           ditto "$APP" "$STAGE/NotchSignal.app"
           ln -s /Applications "$STAGE/Applications"
