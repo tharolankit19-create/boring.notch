@@ -23,8 +23,6 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 35
 
-    env:
-      SWIFT_PACKAGE_DIR: ${{ runner.temp }}/notchsignal-source-packages
 
     steps:
       - name: Checkout
@@ -38,6 +36,7 @@ jobs:
       - name: Resolve packages deterministically
         run: |
           set -euo pipefail
+          SWIFT_PACKAGE_DIR="$RUNNER_TEMP/notchsignal-source-packages"
 
           # GitHub's macOS images can occasionally retain half-created binary
           # SwiftPM artifact directories (notably Lottie/Sparkle). This produces
@@ -60,6 +59,7 @@ jobs:
       - name: Build universal Release app
         run: |
           set -euo pipefail
+          SWIFT_PACKAGE_DIR="$RUNNER_TEMP/notchsignal-source-packages"
           xcodebuild             -project boringNotch.xcodeproj             -scheme boringNotch             -configuration Release             -derivedDataPath "$PWD/build"             -clonedSourcePackagesDirPath "$SWIFT_PACKAGE_DIR"             -onlyUsePackageVersionsFromResolvedFile             -destination "generic/platform=macOS"             ARCHS="arm64 x86_64"             ONLY_ACTIVE_ARCH=NO             CODE_SIGNING_ALLOWED=NO             CODE_SIGNING_REQUIRED=NO             DEVELOPMENT_TEAM=""             build
 
       - name: Verify universal binaries and bundle identity
