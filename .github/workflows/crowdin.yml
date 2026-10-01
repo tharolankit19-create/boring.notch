@@ -6,3 +6,6 @@ on:
 jobs:
   crowdin:
     runs-on: ubuntu-latest
+    steps:
+      - name: Crowdin is not configured for NotchSignal
+        run: echo "Crowdin sync is intentionally manual until translation credentials are configured."
