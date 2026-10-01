@@ -1,0 +1,81 @@
+name: NotchSignal Runtime Smoke
+
+on:
+  push:
+    branches:
+      - feat/notchsignal-agent-center
+      - main
+    paths:
+      - "boringNotch/**"
+      - "BoringNotchXPCHelper/**"
+      - "boringNotch.xcodeproj/**"
+      - ".github/workflows/notchsignal_runtime_smoke.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "boringNotch/**"
+      - "BoringNotchXPCHelper/**"
+      - "boringNotch.xcodeproj/**"
+      - ".github/workflows/notchsignal_runtime_smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  launch-smoke:
+    name: Build and launch on macOS runner
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Resolve packages
+        run: xcodebuild -resolvePackageDependencies -project boringNotch.xcodeproj
+
+      - name: Build host architecture
+        run: |
+          set -euo pipefail
+          HOST_ARCH="$(uname -m)"
+          xcodebuild             -project boringNotch.xcodeproj             -scheme boringNotch             -configuration Release             -derivedDataPath "$PWD/build-runtime"             -destination "generic/platform=macOS"             ARCHS="$HOST_ARCH"             ONLY_ACTIVE_ARCH=YES             CODE_SIGNING_ALLOWED=NO             CODE_SIGNING_REQUIRED=NO             DEVELOPMENT_TEAM=""             build
+
+      - name: Validate bundle and XPC helper
+        run: |
+          set -euo pipefail
+          APP="$PWD/build-runtime/Build/Products/Release/NotchSignal.app"
+          test -x "$APP/Contents/MacOS/NotchSignal"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist")" = "com.tharolankit.notchsignal"
+          XPC="$APP/Contents/XPCServices/BoringNotchXPCHelper.xpc"
+          test -d "$XPC"
+          test -x "$XPC/Contents/MacOS/BoringNotchXPCHelper"
+
+      - name: Launch process smoke
+        run: |
+          set -euo pipefail
+          APP="$PWD/build-runtime/Build/Products/Release/NotchSignal.app"
+          LOG="$RUNNER_TEMP/notchsignal-runtime.log"
+
+          "$APP/Contents/MacOS/NotchSignal" >"$LOG" 2>&1 &
+          PID=$!
+          echo "Launched PID=$PID"
+
+          sleep 10
+          if ! kill -0 "$PID" 2>/dev/null; then
+            echo "::error::NotchSignal exited during the 10-second runtime smoke."
+            cat "$LOG" || true
+            exit 1
+          fi
+
+          if grep -Eiq "fatal error|uncaught exception|segmentation fault|abort trap" "$LOG"; then
+            echo "::error::Fatal runtime signature found in process output."
+            cat "$LOG"
+            kill "$PID" || true
+            exit 1
+          fi
+
+          kill "$PID"
+          wait "$PID" || true
+          echo "Runtime smoke passed: process stayed alive for 10 seconds."
