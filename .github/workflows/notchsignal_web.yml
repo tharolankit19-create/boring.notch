@@ -1,0 +1,52 @@
+name: NotchSignal Web
+
+on:
+  push:
+    paths:
+      - "website/**"
+      - ".github/workflows/notchsignal_web.yml"
+  pull_request:
+    paths:
+      - "website/**"
+      - ".github/workflows/notchsignal_web.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: website
+
+    env:
+      APP_URL: http://localhost:3000
+      DODO_PAYMENTS_API_KEY: test_dummy
+      DODO_PAYMENTS_WEBHOOK_KEY: whsec_test_dummy
+      DODO_PAYMENTS_ENVIRONMENT: test_mode
+      DODO_NOTCHSIGNAL_PRODUCT_ID: pdt_test_dummy
+      NOTCHSIGNAL_PRICE_MINOR: "500"
+      NOTCHSIGNAL_CURRENCY: USD
+      SUPABASE_URL: https://example.supabase.co
+      SUPABASE_SERVICE_ROLE_KEY: test_dummy
+      ACCESS_TOKEN_SECRET: ci-only-not-a-production-secret
+      RESEND_API_KEY: re_test_dummy
+      ACCESS_EMAIL_FROM: NotchSignal <ci@example.com>
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: website/package.json
+
+      - name: Install
+        run: npm install --no-audit --no-fund
+
+      - name: Typecheck and build
+        run: npm run build

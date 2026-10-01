@@ -13,7 +13,7 @@ import Sparkle
 import SwiftUI
 
 @main
-struct DynamicNotchApp: App {
+struct NotchSignalApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @Default(.menubarIcon) var showMenuBarIcon
     @Environment(\.openWindow) var openWindow

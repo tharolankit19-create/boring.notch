@@ -1,0 +1,200 @@
+name: NotchSignal Signed Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Semver without v (example: 0.1.0)"
+        required: true
+        type: string
+      release_notes:
+        description: "Short release notes"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: notchsignal-release
+  cancel-in-progress: false
+
+jobs:
+  signed-release:
+    name: Sign, notarize, staple, publish
+    runs-on: macos-15
+    timeout-minutes: 45
+    if: github.ref == 'refs/heads/main'
+
+    env:
+      APP_NAME: NotchSignal
+      PROJECT: boringNotch.xcodeproj
+      SCHEME: boringNotch
+      VERSION: ${{ inputs.version }}
+      RELEASE_NOTES: ${{ inputs.release_notes }}
+      RELEASE_BUCKET: notchsignal-releases
+
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Validate version and required secrets
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          SIGNING_IDENTITY: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION }}
+          SUPABASE_URL: ${{ secrets.NOTCHSIGNAL_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.NOTCHSIGNAL_SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]] || {
+            echo "::error::Invalid version: $VERSION"
+            exit 1
+          }
+          for name in BUILD_CERTIFICATE_BASE64 P12_PASSWORD KEYCHAIN_PASSWORD APPLE_ID APPLE_TEAM_ID APPLE_APP_SPECIFIC_PASSWORD SIGNING_IDENTITY SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Missing release secret: $name"
+              exit 1
+            fi
+          done
+
+      - name: Import Developer ID certificate
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          CERT_PATH="$RUNNER_TEMP/notchsignal-developer-id.p12"
+          KEYCHAIN="$RUNNER_TEMP/notchsignal-release.keychain-db"
+          printf '%s' "$BUILD_CERTIFICATE_BASE64" | base64 --decode > "$CERT_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$CERT_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN"
+          security find-identity -v -p codesigning "$KEYCHAIN"
+
+      - name: Resolve packages
+        run: xcodebuild -resolvePackageDependencies -project "$PROJECT"
+
+      - name: Build signed universal app
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          SIGNING_IDENTITY: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION }}
+        run: |
+          set -euo pipefail
+          xcodebuild             -project "$PROJECT"             -scheme "$SCHEME"             -configuration Release             -derivedDataPath "$PWD/build"             -destination "generic/platform=macOS"             ARCHS="arm64 x86_64"             ONLY_ACTIVE_ARCH=NO             MARKETING_VERSION="$VERSION"             CURRENT_PROJECT_VERSION="${GITHUB_RUN_NUMBER}"             DEVELOPMENT_TEAM="$APPLE_TEAM_ID"             CODE_SIGN_STYLE=Manual             CODE_SIGN_IDENTITY="$SIGNING_IDENTITY"             CODE_SIGNING_REQUIRED=YES             build
+
+          APP="$PWD/build/Build/Products/Release/$APP_NAME.app"
+          test -d "$APP"
+
+          ARCHS="$(lipo -archs "$APP/Contents/MacOS/$APP_NAME")"
+          echo "Architectures: $ARCHS"
+          grep -q arm64 <<<"$ARCHS"
+          grep -q x86_64 <<<"$ARCHS"
+
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -dv --verbose=4 "$APP" 2>&1 | tee "$RUNNER_TEMP/codesign.txt"
+          grep -q "Runtime Version" "$RUNNER_TEMP/codesign.txt" || {
+            echo "::error::Hardened runtime was not detected."
+            exit 1
+          }
+
+      - name: Notarize app bundle
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          set -euo pipefail
+          APP="$PWD/build/Build/Products/Release/$APP_NAME.app"
+          ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/$APP_NAME.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/$APP_NAME.zip"             --apple-id "$APPLE_ID"             --team-id "$APPLE_TEAM_ID"             --password "$APPLE_APP_SPECIFIC_PASSWORD"             --wait
+          xcrun stapler staple "$APP"
+          xcrun stapler validate "$APP"
+          spctl -a -vvv -t exec "$APP"
+
+      - name: Create signed DMG
+        env:
+          SIGNING_IDENTITY: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION }}
+        run: |
+          set -euo pipefail
+          APP="$PWD/build/Build/Products/Release/$APP_NAME.app"
+          STAGE="$RUNNER_TEMP/dmg"
+          mkdir -p "$STAGE" dist
+          ditto "$APP" "$STAGE/$APP_NAME.app"
+          ln -s /Applications "$STAGE/Applications"
+          hdiutil create             -volname "$APP_NAME"             -srcfolder "$STAGE"             -ov             -format UDZO             "dist/$APP_NAME-$VERSION.dmg"
+
+          codesign --force --timestamp --sign "$SIGNING_IDENTITY" "dist/$APP_NAME-$VERSION.dmg"
+          codesign --verify --verbose=2 "dist/$APP_NAME-$VERSION.dmg"
+
+      - name: Notarize and staple DMG
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          set -euo pipefail
+          xcrun notarytool submit "dist/$APP_NAME-$VERSION.dmg"             --apple-id "$APPLE_ID"             --team-id "$APPLE_TEAM_ID"             --password "$APPLE_APP_SPECIFIC_PASSWORD"             --wait
+          xcrun stapler staple "dist/$APP_NAME-$VERSION.dmg"
+          xcrun stapler validate "dist/$APP_NAME-$VERSION.dmg"
+          hdiutil verify "dist/$APP_NAME-$VERSION.dmg"
+          shasum -a 256 "dist/$APP_NAME-$VERSION.dmg" | tee "dist/$APP_NAME-$VERSION.dmg.sha256"
+
+      - name: Upload notarized DMG to private storage
+        env:
+          SUPABASE_URL: ${{ secrets.NOTCHSIGNAL_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.NOTCHSIGNAL_SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -euo pipefail
+          OBJECT="$APP_NAME-$VERSION.dmg"
+          curl --fail-with-body             -X POST             -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY"             -H "apikey: $SUPABASE_SERVICE_ROLE_KEY"             -H "Content-Type: application/x-apple-diskimage"             -H "x-upsert: true"             --data-binary @"dist/$OBJECT"             "$SUPABASE_URL/storage/v1/object/$RELEASE_BUCKET/$OBJECT"
+
+          SHA256="$(shasum -a 256 "dist/$OBJECT" | awk '{print $1}')"
+          SOURCE_URL="https://github.com/${GITHUB_REPOSITORY}/tree/notchsignal-v$VERSION"
+          export OBJECT SHA256 SOURCE_URL
+
+          python3 - <<'PY'
+          import json, os
+          payload = {
+            "p_version": os.environ["VERSION"],
+            "p_storage_object": os.environ["OBJECT"],
+            "p_sha256": os.environ["SHA256"],
+            "p_release_notes": os.environ["RELEASE_NOTES"],
+            "p_source_url": os.environ["SOURCE_URL"],
+            "p_minimum_macos": "14.0",
+            "p_architectures": ["arm64", "x86_64"],
+          }
+          open("/tmp/release.json","w").write(json.dumps(payload))
+          PY
+
+          curl --fail-with-body             -X POST             -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY"             -H "apikey: $SUPABASE_SERVICE_ROLE_KEY"             -H "Content-Type: application/json"             --data @/tmp/release.json             "$SUPABASE_URL/rest/v1/rpc/notchsignal_publish_release"
+
+      - name: Publish GPL source tag and release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="notchsignal-v$VERSION"
+          git tag "$TAG" "$GITHUB_SHA"
+          git push origin "$TAG"
+          printf '%s\n\n%s\n'             "NotchSignal $VERSION"             "$RELEASE_NOTES" > /tmp/release-notes.md
+          printf '%s\n'             "Corresponding source: this exact tag/commit."             "Binary access is distributed separately; GPL-3.0 rights are unchanged."             >> /tmp/release-notes.md
+          gh release create "$TAG"             --title "NotchSignal $VERSION"             --notes-file /tmp/release-notes.md             --verify-tag
+
+      - name: Upload release artifact for CI retention
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: NotchSignal-${{ inputs.version }}-notarized
+          path: |
+            dist/NotchSignal-${{ inputs.version }}.dmg
+            dist/NotchSignal-${{ inputs.version }}.dmg.sha256
+          if-no-files-found: error
+          retention-days: 30

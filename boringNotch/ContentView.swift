@@ -23,6 +23,7 @@ struct ContentView: View {
     @ObservedObject var batteryModel = BatteryStatusViewModel.shared
     @ObservedObject var brightnessManager = BrightnessManager.shared
     @ObservedObject var volumeManager = VolumeManager.shared
+    @ObservedObject var agentMonitor = AgentMonitor.shared
     @State private var hoverTask: Task<Void, Never>?
     @State private var isHovering: Bool = false
     @State private var anyDropDebounceTask: Task<Void, Never>?
@@ -65,6 +66,8 @@ struct ContentView: View {
             && vm.notchState == .closed && Defaults[.showPowerStatusNotifications]
         {
             chinWidth = 640
+        } else if vm.notchState == .closed && !vm.hideOnClosed && agentMonitor.prioritySession != nil {
+            chinWidth += 236
         } else if (!coordinator.expandingView.show || coordinator.expandingView.type == .music)
             && vm.notchState == .closed && (musicManager.isPlaying || !musicManager.isPlayerIdle)
             && coordinator.musicLiveActivityEnabled && !vm.hideOnClosed
@@ -240,6 +243,16 @@ struct ContentView: View {
                 }
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .notchSignalNeedsAttention)) { _ in
+            guard UserDefaults.standard.bool(forKey: "notchsignal.autoExpandAttention"),
+                  !UserDefaults.standard.bool(forKey: "notchsignal.doNotDisturb")
+            else { return }
+
+            coordinator.currentView = .home
+            if vm.notchState == .closed {
+                vm.open()
+            }
+        }
     }
 
     @ViewBuilder
@@ -286,6 +299,9 @@ struct ContentView: View {
                         .frame(height: vm.effectiveClosedNotchHeight, alignment: .center)
                       } else if coordinator.sneakPeek.show && Defaults[.inlineHUD] && (coordinator.sneakPeek.type != .music) && (coordinator.sneakPeek.type != .battery) && vm.notchState == .closed {
                           InlineHUD(type: $coordinator.sneakPeek.type, value: $coordinator.sneakPeek.value, icon: $coordinator.sneakPeek.icon, hoverAnimation: $isHovering, gestureProgress: $gestureProgress)
+                              .transition(.opacity)
+                      } else if vm.notchState == .closed && !vm.hideOnClosed, let session = agentMonitor.prioritySession {
+                          AgentCompactView(session: session, notchWidth: vm.closedNotchSize.width)
                               .transition(.opacity)
                       } else if (!coordinator.expandingView.show || coordinator.expandingView.type == .music) && vm.notchState == .closed && (musicManager.isPlaying || !musicManager.isPlayerIdle) && coordinator.musicLiveActivityEnabled && !vm.hideOnClosed {
                           MusicLiveActivity()
