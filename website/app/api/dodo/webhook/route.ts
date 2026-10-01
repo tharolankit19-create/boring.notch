@@ -41,7 +41,7 @@ export async function POST(request: Request) {
     if (event.type === "refund.succeeded" && paymentId) {
       await setPaymentStatus(paymentId, "refunded");
     } else if (
-      ["dispute.opened", "dispute.accepted", "dispute.lost"].includes(event.type) &&
+      ["dispute.opened", "dispute.expired", "dispute.accepted", "dispute.challenged", "dispute.lost"].includes(event.type) &&
       paymentId
     ) {
       await setPaymentStatus(paymentId, "disputed");
