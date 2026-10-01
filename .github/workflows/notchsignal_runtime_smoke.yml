@@ -100,6 +100,16 @@ jobs:
             exit 1
           fi
 
-          kill "$PID"
-          wait "$PID" || true
-          echo "Runtime smoke passed: process stayed alive for 10 seconds."
+          kill -TERM "$PID" 2>/dev/null || true
+          for _ in {1..10}; do
+            if ! kill -0 "$PID" 2>/dev/null; then
+              break
+            fi
+            sleep 0.2
+          done
+          if kill -0 "$PID" 2>/dev/null; then
+            echo "::notice::App ignored SIGTERM in CI; forcing termination after successful smoke."
+            kill -KILL "$PID" 2>/dev/null || true
+          fi
+          wait "$PID" 2>/dev/null || true
+          echo "Runtime smoke passed: process stayed alive for 10 seconds without a fatal signature."
