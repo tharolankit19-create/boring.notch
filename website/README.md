@@ -41,3 +41,16 @@ Before public launch, complete one full Dodo **test-mode** purchase and verify t
 `checkout → Dodo return → /download confirms server-side payment → private signed URL → DMG downloads`
 
 Then send a signed test webhook for a refund and confirm the same purchase no longer unlocks `/api/download`. Switch to live-mode keys only after the test-mode flow passes.
+
+
+## Production web deployment workflow
+
+`.github/workflows/notchsignal_web_deploy.yml` is intentionally manual and fail-closed.
+
+Required GitHub Environment/Actions secrets:
+
+- `VERCEL_TOKEN`
+- `VERCEL_ORG_ID`
+- `VERCEL_PROJECT_ID`
+
+The workflow pulls the production environment, builds with Vercel, deploys an isolated preview, smoke-tests the landing/download pages, and only promotes that exact deployment to production when `/api/ready` confirms a real private signed NotchSignal release is downloadable. This prevents a public $5 checkout from being promoted while the binary release gate is incomplete.
