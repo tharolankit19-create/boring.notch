@@ -96,6 +96,8 @@ type PaymentShape = {
   amount?: number | null;
   currency?: string | null;
   status?: string | null;
+  refund_status?: "partial" | "full" | null;
+  disputes?: Array<{ dispute_status?: string | null }> | null;
   customer?: { email?: string | null } | null;
   product_cart?: Array<{ product_id?: string | null; quantity?: number | null }> | null;
 };
@@ -115,6 +117,16 @@ export function validateFoundingPayment(payment: PaymentShape) {
   }
   if (payment.status && payment.status !== "succeeded") {
     throw new Error("Payment not succeeded.");
+  }
+  if (payment.refund_status) {
+    throw new Error("Payment has a refund and cannot grant download access.");
+  }
+  const activeDispute = payment.disputes?.some(dispute =>
+    dispute.dispute_status &&
+    !["dispute_won", "dispute_cancelled"].includes(dispute.dispute_status)
+  );
+  if (activeDispute) {
+    throw new Error("Payment has an unresolved or lost dispute.");
   }
   if (!payment.payment_id) throw new Error("Payment id missing.");
   if (!payment.customer?.email) throw new Error("Purchaser email missing.");
