@@ -171,8 +171,17 @@ jobs:
 
           # Commerce must never unlock before the exact corresponding source is
           # addressable. A source-only release is safe if a later binary step fails.
-          git tag "$TAG" "$GITHUB_SHA"
-          git push origin "$TAG"
+          REMOTE_SHA="$(git ls-remote --tags origin "refs/tags/$TAG" | awk '{print $1}')"
+          if [[ -n "$REMOTE_SHA" ]]; then
+            if [[ "$REMOTE_SHA" != "$GITHUB_SHA" ]]; then
+              echo "::error::Tag $TAG already exists at $REMOTE_SHA, expected $GITHUB_SHA"
+              exit 1
+            fi
+            echo "Source tag already exists at the expected commit; safe retry."
+          else
+            git tag "$TAG" "$GITHUB_SHA"
+            git push origin "$TAG"
+          fi
 
           printf '%s\n\n%s\n' "NotchSignal $VERSION" "$RELEASE_NOTES" > /tmp/release-notes.md
           printf '%s\n' \
@@ -180,10 +189,14 @@ jobs:
             "Binary access is distributed separately; GPL-3.0 rights are unchanged." \
             >> /tmp/release-notes.md
 
-          gh release create "$TAG" \
-            --title "NotchSignal $VERSION" \
-            --notes-file /tmp/release-notes.md \
-            --verify-tag
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "GitHub source release already exists; safe retry."
+          else
+            gh release create "$TAG" \
+              --title "NotchSignal $VERSION" \
+              --notes-file /tmp/release-notes.md \
+              --verify-tag
+          fi
 
       - name: Upload notarized DMG to private storage
         env:
