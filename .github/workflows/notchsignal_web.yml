@@ -50,3 +50,24 @@ jobs:
 
       - name: Typecheck and build
         run: npm run build
+
+      - name: Production server smoke
+        run: |
+          set -euo pipefail
+          npm start > /tmp/notchsignal-web.log 2>&1 &
+          PID=$!
+          trap 'kill "$PID" 2>/dev/null || true' EXIT
+
+          for i in {1..30}; do
+            if curl --fail --silent --show-error http://127.0.0.1:3000/ -o /tmp/notchsignal-home.html; then
+              break
+            fi
+            sleep 1
+          done
+
+          test -s /tmp/notchsignal-home.html
+          grep -q "Stop checking" /tmp/notchsignal-home.html
+          grep -q "NotchSignal" /tmp/notchsignal-home.html
+          curl --fail --silent --show-error http://127.0.0.1:3000/download -o /tmp/notchsignal-download.html
+          grep -q "NotchSignal" /tmp/notchsignal-download.html
+          kill -0 "$PID"
