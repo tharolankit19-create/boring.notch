@@ -39,6 +39,16 @@ export async function recordVerifiedPurchase(input: {
     })
   });
 }
+export async function setPaymentStatus(paymentId: string, status: "succeeded" | "refunded" | "disputed") {
+  await rest("rpc/notchsignal_set_payment_status", {
+    method: "POST",
+    body: JSON.stringify({
+      p_payment_id: paymentId,
+      p_status: status
+    })
+  });
+}
+
 export async function purchaseByCheckoutSession(sessionId: string) {
   const rows = await rest<Purchase[]>(
     `notchsignal_purchases?select=id,email,payment_id,checkout_session_id,payment_status,amount,currency,product_version&checkout_session_id=eq.${encodeURIComponent(sessionId)}&payment_status=eq.succeeded&limit=1`
