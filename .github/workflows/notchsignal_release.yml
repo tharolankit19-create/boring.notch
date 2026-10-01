@@ -148,18 +148,64 @@ jobs:
           hdiutil verify "dist/$APP_NAME-$VERSION.dmg"
           shasum -a 256 "dist/$APP_NAME-$VERSION.dmg" | tee "dist/$APP_NAME-$VERSION.dmg.sha256"
 
+      - name: Prepare release metadata
+        run: |
+          set -euo pipefail
+          OBJECT="$APP_NAME-$VERSION.dmg"
+          SHA256="$(shasum -a 256 "dist/$OBJECT" | awk '{print $1}')"
+          TAG="notchsignal-v$VERSION"
+          SOURCE_URL="https://github.com/${GITHUB_REPOSITORY}/tree/$TAG"
+
+          {
+            echo "OBJECT=$OBJECT"
+            echo "SHA256=$SHA256"
+            echo "TAG=$TAG"
+            echo "SOURCE_URL=$SOURCE_URL"
+          } >> "$GITHUB_ENV"
+
+      - name: Publish exact GPL source first
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          # Commerce must never unlock before the exact corresponding source is
+          # addressable. A source-only release is safe if a later binary step fails.
+          git tag "$TAG" "$GITHUB_SHA"
+          git push origin "$TAG"
+
+          printf '%s\n\n%s\n' "NotchSignal $VERSION" "$RELEASE_NOTES" > /tmp/release-notes.md
+          printf '%s\n' \
+            "Corresponding source: this exact tag/commit." \
+            "Binary access is distributed separately; GPL-3.0 rights are unchanged." \
+            >> /tmp/release-notes.md
+
+          gh release create "$TAG" \
+            --title "NotchSignal $VERSION" \
+            --notes-file /tmp/release-notes.md \
+            --verify-tag
+
       - name: Upload notarized DMG to private storage
         env:
           SUPABASE_URL: ${{ secrets.NOTCHSIGNAL_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.NOTCHSIGNAL_SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           set -euo pipefail
-          OBJECT="$APP_NAME-$VERSION.dmg"
-          curl --fail-with-body             -X POST             -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY"             -H "apikey: $SUPABASE_SERVICE_ROLE_KEY"             -H "Content-Type: application/x-apple-diskimage"             -H "x-upsert: true"             --data-binary @"dist/$OBJECT"             "$SUPABASE_URL/storage/v1/object/$RELEASE_BUCKET/$OBJECT"
+          curl --fail-with-body \
+            -X POST \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/x-apple-diskimage" \
+            -H "x-upsert: true" \
+            --data-binary @"dist/$OBJECT" \
+            "$SUPABASE_URL/storage/v1/object/$RELEASE_BUCKET/$OBJECT"
 
-          SHA256="$(shasum -a 256 "dist/$OBJECT" | awk '{print $1}')"
-          SOURCE_URL="https://github.com/${GITHUB_REPOSITORY}/tree/notchsignal-v$VERSION"
-          export OBJECT SHA256 SOURCE_URL
+      - name: Publish release manifest last
+        env:
+          SUPABASE_URL: ${{ secrets.NOTCHSIGNAL_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.NOTCHSIGNAL_SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -euo pipefail
 
           python3 - <<'PY'
           import json, os
@@ -175,19 +221,46 @@ jobs:
           open("/tmp/release.json","w").write(json.dumps(payload))
           PY
 
-          curl --fail-with-body             -X POST             -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY"             -H "apikey: $SUPABASE_SERVICE_ROLE_KEY"             -H "Content-Type: application/json"             --data @/tmp/release.json             "$SUPABASE_URL/rest/v1/rpc/notchsignal_publish_release"
+          curl --fail-with-body \
+            -X POST \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/json" \
+            --data @/tmp/release.json \
+            "$SUPABASE_URL/rest/v1/rpc/notchsignal_publish_release"
 
-      - name: Publish GPL source tag and release
+      - name: Verify commerce readiness gate
         env:
-          GH_TOKEN: ${{ github.token }}
+          SUPABASE_URL: ${{ secrets.NOTCHSIGNAL_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.NOTCHSIGNAL_SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           set -euo pipefail
-          TAG="notchsignal-v$VERSION"
-          git tag "$TAG" "$GITHUB_SHA"
-          git push origin "$TAG"
-          printf '%s\n\n%s\n'             "NotchSignal $VERSION"             "$RELEASE_NOTES" > /tmp/release-notes.md
-          printf '%s\n'             "Corresponding source: this exact tag/commit."             "Binary access is distributed separately; GPL-3.0 rights are unchanged."             >> /tmp/release-notes.md
-          gh release create "$TAG"             --title "NotchSignal $VERSION"             --notes-file /tmp/release-notes.md             --verify-tag
+          curl --fail-with-body \
+            -X POST \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/json" \
+            --data '{}' \
+            "$SUPABASE_URL/rest/v1/rpc/notchsignal_current_release" \
+            -o /tmp/current-release.json
+
+          python3 - <<'PY'
+          import json, os, sys
+          rows = json.load(open("/tmp/current-release.json"))
+          if len(rows) != 1:
+              raise SystemExit(f"Expected one ready release, got {len(rows)}")
+          row = rows[0]
+          expected = {
+              "version": os.environ["VERSION"],
+              "storage_object": os.environ["OBJECT"],
+              "sha256": os.environ["SHA256"].lower(),
+              "source_url": os.environ["SOURCE_URL"],
+          }
+          for key, value in expected.items():
+              if str(row.get(key, "")).lower() != str(value).lower():
+                  raise SystemExit(f"Release readiness mismatch for {key}: {row.get(key)!r} != {value!r}")
+          print("Release manifest + private DMG object gate verified.")
+          PY
 
       - name: Upload release artifact for CI retention
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
