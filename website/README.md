@@ -1,26 +1,39 @@
 # NotchSignal website
 
-Production landing, Dodo checkout, server-verified purchase access, magic-link recovery, private DMG download, version endpoint and privacy-safe landing analytics.
+Production landing, animated MacBook product demo, Dodo checkout, server-verified purchase access, magic-link recovery, private DMG download, version endpoint and privacy-safe landing analytics.
 
 ## Deployment
 
-1. Apply `supabase/migrations/001_notchsignal_commerce.sql`.
+1. Apply `supabase/migrations/001_notchsignal_commerce.sql` and `002_notchsignal_entitlement_revocation.sql`.
 2. Create a **private** Supabase Storage bucket named `notchsignal-releases`.
 3. Create a Dodo one-time product priced at exactly USD $5 and set `DODO_NOTCHSIGNAL_PRODUCT_ID`.
-4. Configure Dodo webhook `POST /api/dodo/webhook` for `payment.succeeded`.
+4. Configure Dodo webhook `POST /api/dodo/webhook` for `payment.succeeded`, `refund.succeeded`, and dispute lifecycle events.
 5. Configure all values from `.env.example` in the hosting platform.
 6. Configure Resend (or replace `lib/email.ts`) for purchase-access email.
 7. Deploy and set `APP_URL` to the final HTTPS origin.
-8. Upload only a signed, notarized, stapled DMG to the configured private Storage object.
+8. Run the signed release workflow so the notarized DMG is uploaded and a current release manifest is published.
+9. Verify `GET /api/ready` returns `200` with `ready: true`.
+10. Only then open checkout traffic.
 
-## Security properties
+## Payment / download safety
 
+- Checkout is closed if no current signed release manifest exists, so a buyer cannot pay and then hit a missing-download error.
+- Dodo's browser return `session_id` is never trusted on its own; it is reconciled server-side.
 - Redirects never unlock downloads.
 - Webhooks are signature-verified with Dodo's SDK.
 - Delayed webhooks can be reconciled against Dodo server-side.
-- Product id, amount and currency are checked before purchase recording.
+- Product id, amount (500 minor units), currency (USD) and quantity are checked before purchase recording.
 - Webhook/purchase recording is atomic and replay-safe through Postgres.
+- Refund/dispute lifecycle events revoke purchase entitlement; a won/cancelled dispute can restore it unless the purchase was already refunded.
 - DMGs stay private; authorized downloads use a short-lived signed Storage URL.
 - Magic-link recovery does not reveal whether an email exists.
 - Access links are HMAC-signed and expire in one hour.
 - Commerce analytics never receives source code, prompts or agent telemetry.
+
+## Go-live test
+
+Before public launch, complete one full Dodo **test-mode** purchase and verify this sequence:
+
+`checkout → Dodo return → /download confirms server-side payment → private signed URL → DMG downloads`
+
+Then send a signed test webhook for a refund and confirm the same purchase no longer unlocks `/api/download`. Switch to live-mode keys only after the test-mode flow passes.
