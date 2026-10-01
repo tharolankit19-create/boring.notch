@@ -5,7 +5,7 @@
 - Universal unsigned DMG smoke build: automated and verified on CI.
 - Production signing/notarization: automated by `.github/workflows/notchsignal_release.yml`, but it cannot complete until the required Apple and storage secrets exist.
 - Corresponding GPL source: every production release creates a `notchsignal-vX.Y.Z` source tag and GitHub source release.
-- Buyer download: the signed DMG is uploaded to the private `notchsignal-releases` Supabase Storage bucket, then the current release manifest is atomically updated.
+- Buyer download: the signed DMG is uploaded to the private `notchsignal-releases` Supabase Storage bucket under a content-addressed `version + SHA` object name with overwrite disabled, then the current release manifest is atomically updated.
 
 ## Required GitHub Actions secrets
 
