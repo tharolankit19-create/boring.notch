@@ -1,9 +1,8 @@
 name: Nightly Branch Builds
 
 on:
-  # Scheduled runs only start once this workflow exists on the default branch.
-  schedule:
-    - cron: "0 3 * * *"
+  # Legacy Boring Notch nightly publishing is intentionally opt-in in the
+  # NotchSignal fork. Production NotchSignal releases use notchsignal_release.yml.
   workflow_dispatch:
 
 concurrency:
