@@ -1,20 +1,14 @@
 import { NextResponse } from "next/server";
-import { checkoutSessionFromCookie, setCheckoutCookie, verifyAccessToken } from "@/lib/access";
+import { checkoutSessionFromCookie, verifyAccessToken } from "@/lib/access";
 import { purchaseByCheckoutSession, purchaseByEmail, recordVerifiedPurchase } from "@/lib/db";
 import { reconcileCheckout } from "@/lib/dodo";
 
 export const runtime = "nodejs";
 
-function safeCheckoutSession(value: string | null) {
-  if (!value) return null;
-  return /^cks_[A-Za-z0-9_-]{6,200}$/.test(value) ? value : null;
-}
-
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
-    const token = url.searchParams.get("token");
-    const access = verifyAccessToken(token);
+    const access = verifyAccessToken(url.searchParams.get("token"));
 
     if (access) {
       const purchase = await purchaseByEmail(access.email);
@@ -24,10 +18,15 @@ export async function GET(request: Request) {
       );
     }
 
-    const returnedSession = safeCheckoutSession(url.searchParams.get("session_id"));
-    const sessionId = returnedSession ?? await checkoutSessionFromCookie();
+    // Checkout access is bound to the HMAC-signed HttpOnly cookie we issued
+    // before redirecting to Dodo. A raw checkout session id from the URL is
+    // intentionally not accepted as an entitlement credential.
+    const sessionId = await checkoutSessionFromCookie();
     if (!sessionId) {
-      return NextResponse.json({ paid: false }, { headers: { "Cache-Control": "no-store" } });
+      return NextResponse.json(
+        { paid: false },
+        { headers: { "Cache-Control": "no-store" } }
+      );
     }
 
     let purchase = await purchaseByCheckoutSession(sessionId);
@@ -40,10 +39,6 @@ export async function GET(request: Request) {
         });
         purchase = await purchaseByCheckoutSession(sessionId);
       }
-    }
-
-    if (purchase && returnedSession) {
-      await setCheckoutCookie(returnedSession);
     }
 
     return NextResponse.json(

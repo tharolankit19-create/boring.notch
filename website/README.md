@@ -19,7 +19,7 @@ Production landing, animated MacBook product demo, Dodo checkout, server-verifie
 
 - Checkout is closed unless a current signed release manifest **and its private Storage DMG object** both exist, so a buyer cannot pay and then hit a missing-download error.
 - Before a checkout session is created, Dodo preview must confirm one one-time product, quantity 1, tax-inclusive USD $5.00; discounts and currency switching are disabled.
-- Dodo's browser return `session_id` is never trusted on its own; it is reconciled server-side.
+- Dodo's browser return `session_id` is never accepted as an access credential. Same-browser checkout access uses the HMAC-signed HttpOnly cookie created before redirect; server-side Dodo reconciliation uses only that signed session. Recovery uses a separate one-hour signed email link.
 - Redirects never unlock downloads.
 - Webhooks are signature-verified with Dodo's SDK.
 - Commerce/release SECURITY DEFINER RPCs are executable only by the server-side `service_role`; browser roles cannot call them.
