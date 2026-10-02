@@ -80,8 +80,29 @@ jobs:
           security list-keychains -d user -s "$KEYCHAIN"
           security find-identity -v -p codesigning "$KEYCHAIN"
 
-      - name: Resolve packages
-        run: xcodebuild -resolvePackageDependencies -project "$PROJECT"
+      - name: Resolve packages deterministically
+        run: |
+          set -euo pipefail
+          SWIFT_PACKAGE_DIR="$RUNNER_TEMP/notchsignal-release-source-packages"
+          rm -rf "$HOME/Library/Caches/org.swift.swiftpm/artifacts"
+          rm -rf "$SWIFT_PACKAGE_DIR"
+
+          resolve() {
+            xcodebuild \
+              -resolvePackageDependencies \
+              -project "$PROJECT" \
+              -scheme "$SCHEME" \
+              -clonedSourcePackagesDirPath "$SWIFT_PACKAGE_DIR" \
+              -onlyUsePackageVersionsFromResolvedFile
+          }
+
+          if ! resolve; then
+            echo "::warning::SwiftPM resolve failed once; clearing transient artifact cache and retrying."
+            rm -rf "$HOME/Library/Caches/org.swift.swiftpm/artifacts"
+            rm -rf "$SWIFT_PACKAGE_DIR"
+            sleep 2
+            resolve
+          fi
 
       - name: Build signed universal app
         env:
@@ -89,7 +110,24 @@ jobs:
           SIGNING_IDENTITY: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION }}
         run: |
           set -euo pipefail
-          xcodebuild             -project "$PROJECT"             -scheme "$SCHEME"             -configuration Release             -derivedDataPath "$PWD/build"             -destination "generic/platform=macOS"             ARCHS="arm64 x86_64"             ONLY_ACTIVE_ARCH=NO             MARKETING_VERSION="$VERSION"             CURRENT_PROJECT_VERSION="${GITHUB_RUN_NUMBER}"             DEVELOPMENT_TEAM="$APPLE_TEAM_ID"             CODE_SIGN_STYLE=Manual             CODE_SIGN_IDENTITY="$SIGNING_IDENTITY"             CODE_SIGNING_REQUIRED=YES             build
+          SWIFT_PACKAGE_DIR="$RUNNER_TEMP/notchsignal-release-source-packages"
+          xcodebuild \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -derivedDataPath "$PWD/build" \
+            -clonedSourcePackagesDirPath "$SWIFT_PACKAGE_DIR" \
+            -onlyUsePackageVersionsFromResolvedFile \
+            -destination "generic/platform=macOS" \
+            ARCHS="arm64 x86_64" \
+            ONLY_ACTIVE_ARCH=NO \
+            MARKETING_VERSION="$VERSION" \
+            CURRENT_PROJECT_VERSION="${GITHUB_RUN_NUMBER}" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="$SIGNING_IDENTITY" \
+            CODE_SIGNING_REQUIRED=YES \
+            build
 
           APP="$PWD/build/Build/Products/Release/$APP_NAME.app"
           test -d "$APP"
@@ -99,7 +137,19 @@ jobs:
           grep -q arm64 <<<"$ARCHS"
           grep -q x86_64 <<<"$ARCHS"
 
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist")" = "com.tharolankit.notchsignal"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP/Contents/Info.plist")" = "NotchSignal"
+
+          XPC="$APP/Contents/XPCServices/BoringNotchXPCHelper.xpc"
+          test -d "$XPC"
+          test -x "$XPC/Contents/MacOS/BoringNotchXPCHelper"
+          XPC_ARCHS="$(lipo -archs "$XPC/Contents/MacOS/BoringNotchXPCHelper")"
+          echo "XPC architectures: $XPC_ARCHS"
+          grep -q arm64 <<<"$XPC_ARCHS"
+          grep -q x86_64 <<<"$XPC_ARCHS"
+
           codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign --verify --strict --verbose=2 "$XPC"
           codesign -dv --verbose=4 "$APP" 2>&1 | tee "$RUNNER_TEMP/codesign.txt"
           grep -q "Runtime Version" "$RUNNER_TEMP/codesign.txt" || {
             echo "::error::Hardened runtime was not detected."
