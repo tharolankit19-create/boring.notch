@@ -7,6 +7,7 @@ enum AgentRunState: String, Codable, CaseIterable {
     case needsAttention
     case finished
     case failed
+    case ended
     case paused
 
     var title: String {
@@ -16,6 +17,7 @@ enum AgentRunState: String, Codable, CaseIterable {
         case .needsAttention: "Needs attention"
         case .finished: "Finished"
         case .failed: "Failed"
+        case .ended: "Ended"
         case .paused: "Paused"
         }
     }
@@ -27,7 +29,17 @@ enum AgentRunState: String, Codable, CaseIterable {
         case .needsAttention: "exclamationmark.circle.fill"
         case .finished: "checkmark.circle.fill"
         case .failed: "xmark.circle.fill"
+        case .ended: "stop.circle.fill"
         case .paused: "pause.fill"
+        }
+    }
+
+    var isActive: Bool {
+        switch self {
+        case .working, .waiting, .needsAttention, .paused:
+            true
+        case .finished, .failed, .ended:
+            false
         }
     }
 }
