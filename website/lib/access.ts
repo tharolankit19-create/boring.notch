@@ -6,6 +6,13 @@ const COOKIE = "notchsignal_checkout";
 function signature(value: string) {
   return crypto.createHmac("sha256", required("ACCESS_TOKEN_SECRET")).update(value).digest("base64url");
 }
+export function accessRecoveryRateKey(email: string) {
+  return crypto
+    .createHmac("sha256", required("ACCESS_TOKEN_SECRET"))
+    .update(`access-recovery:${email.trim().toLowerCase()}`)
+    .digest("hex");
+}
+
 export function signCheckoutSession(sessionId: string) {
   return `${sessionId}.${signature(sessionId)}`;
 }
