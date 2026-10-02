@@ -55,6 +55,16 @@ export async function purchaseByCheckoutSession(sessionId: string) {
   );
   return rows[0] ?? null;
 }
+export async function claimAccessEmailRateLimit(rateKey: string, windowSeconds = 600) {
+  return rest<boolean>("rpc/notchsignal_claim_access_email", {
+    method: "POST",
+    body: JSON.stringify({
+      p_rate_key: rateKey,
+      p_window_seconds: windowSeconds
+    })
+  });
+}
+
 export async function purchaseByEmail(email: string) {
   const rows = await rest<Purchase[]>(
     `notchsignal_purchases?select=id,email,payment_id,checkout_session_id,payment_status,amount,currency,product_version&email=eq.${encodeURIComponent(email.toLowerCase())}&payment_status=eq.succeeded&order=created_at.desc&limit=1`

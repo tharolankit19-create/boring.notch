@@ -4,7 +4,7 @@ Production landing, animated MacBook product demo, Dodo checkout, server-verifie
 
 ## Deployment
 
-1. Apply `supabase/migrations/001_notchsignal_commerce.sql`, `002_notchsignal_entitlement_revocation.sql`, `003_notchsignal_rpc_lockdown.sql`, `004_notchsignal_release_object_gate.sql`, `005_notchsignal_table_grants.sql`, and `006_notchsignal_entitlement_state_machine.sql`.
+1. Apply `supabase/migrations/001_notchsignal_commerce.sql`, `002_notchsignal_entitlement_revocation.sql`, `003_notchsignal_rpc_lockdown.sql`, `004_notchsignal_release_object_gate.sql`, `005_notchsignal_table_grants.sql`, `006_notchsignal_entitlement_state_machine.sql`, and `007_notchsignal_access_rate_limit.sql`.
 2. Create a **private** Supabase Storage bucket named `notchsignal-releases`.
 3. Create a Dodo **one-time, tax-inclusive** product whose buyer total is exactly USD $5 and set `DODO_NOTCHSIGNAL_PRODUCT_ID`. Checkout preflight rejects any other price/type.
 4. Configure Dodo webhook `POST /api/dodo/webhook` for `payment.succeeded`, `refund.succeeded`, and dispute lifecycle events.
@@ -30,7 +30,7 @@ Production landing, animated MacBook product demo, Dodo checkout, server-verifie
 - Refund/dispute lifecycle events revoke purchase entitlement; a won/cancelled dispute can restore it unless the purchase was already refunded.
 - Later `payment.succeeded` deliveries or checkout reconciliation cannot resurrect a refunded/disputed entitlement. Server reconciliation also rejects Dodo payments that already report refunds or unresolved/lost disputes.
 - DMGs stay private; authorized downloads use a short-lived signed Storage URL.
-- Magic-link recovery does not reveal whether an email exists.
+- Magic-link recovery does not reveal whether an email exists and is atomically throttled to one send per target every 10 minutes using an HMAC-derived key (no raw email in the throttle table).
 - Access links are HMAC-signed and expire in one hour.
 - Commerce analytics never receives source code, prompts or agent telemetry.
 
