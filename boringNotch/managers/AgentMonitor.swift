@@ -157,23 +157,23 @@ final class AgentMonitor: ObservableObject {
                 handleTransition(from: previous.status, to: session)
             }
 
-            if session.status == .finished || session.status == .failed {
+            if session.status == .finished || session.status == .failed || session.status == .ended {
                 recordHistory(session)
             }
         }
 
         // If a process vanishes without an explicit provider completion event,
-        // record the disappearance as finished, but do not pretend it was a provider-reported success.
+        // surface a neutral Ended state. Do not infer successful completion.
         for previous in sessions where !detectedIDs.contains(previous.id) {
             guard previous.status == .working || previous.status == .waiting || previous.status == .needsAttention else {
                 continue
             }
-            let finished = AgentSession(
+            let ended = AgentSession(
                 id: previous.id,
                 providerID: previous.providerID,
                 agentName: previous.agentName,
-                status: .finished,
-                statusDetail: "Process ended",
+                status: .ended,
+                statusDetail: "Process ended without a completion signal",
                 startedAt: previous.startedAt,
                 lastActivity: Date(),
                 sourceBundleID: previous.sourceBundleID,
@@ -183,8 +183,8 @@ final class AgentMonitor: ObservableObject {
                 tty: previous.tty,
                 processID: nil
             )
-            next.append(finished)
-            recordHistory(finished)
+            next.append(ended)
+            recordHistory(ended)
         }
 
         sessions = next.sorted(by: prioritySort)
@@ -218,14 +218,36 @@ final class AgentMonitor: ObservableObject {
 
     @MainActor
     private func recordHistory(_ session: AgentSession) {
-        guard !recordedHistoryIDs.contains(session.id) else { return }
-        recordedHistoryIDs.insert(session.id)
+        guard session.status == .finished || session.status == .failed || session.status == .ended else {
+            return
+        }
 
+        if recordedHistoryIDs.contains(session.id) {
+            // A provider completion/failure signal can arrive just after the
+            // process disappears. Upgrade a provisional Ended record when a
+            // more authoritative terminal state arrives.
+            if session.status != .ended,
+               let index = history.firstIndex(where: { $0.id.hasPrefix("\(session.id)-") }),
+               history[index].status == .ended {
+                history[index] = AgentHistoryItem(
+                    id: history[index].id,
+                    agentName: session.agentName,
+                    workspaceName: session.workspaceName,
+                    status: session.status,
+                    startedAt: history[index].startedAt,
+                    finishedAt: Date()
+                )
+                persistHistory()
+            }
+            return
+        }
+
+        recordedHistoryIDs.insert(session.id)
         let item = AgentHistoryItem(
             id: "\(session.id)-\(Int(Date().timeIntervalSince1970))",
             agentName: session.agentName,
             workspaceName: session.workspaceName,
-            status: session.status == .failed ? .failed : .finished,
+            status: session.status,
             startedAt: session.startedAt,
             finishedAt: Date()
         )
@@ -274,8 +296,9 @@ final class AgentMonitor: ObservableObject {
             .failed: 1,
             .working: 2,
             .waiting: 3,
-            .finished: 4,
-            .paused: 5
+            .ended: 4,
+            .finished: 5,
+            .paused: 6
         ]
         let left = rank[lhs.status, default: 99]
         let right = rank[rhs.status, default: 99]

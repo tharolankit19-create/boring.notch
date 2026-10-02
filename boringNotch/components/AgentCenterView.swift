@@ -34,7 +34,7 @@ struct AgentCenterView: View {
                 .font(.system(size: 13, weight: .semibold))
             Text("Agents")
                 .font(.system(size: 14, weight: .semibold))
-            Text("\(monitor.sessions.filter { $0.status != .finished }.count) active")
+            Text("\(monitor.sessions.filter { $0.status.isActive }.count) active")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
 
@@ -126,7 +126,7 @@ private struct AgentSessionRow: View {
                     Text("·")
                     Text(session.statusDetail)
                         .lineLimit(1)
-                    if session.status != .finished && session.status != .failed {
+                    if session.status.isActive {
                         Text("·")
                         TimelineView(.periodic(from: .now, by: 1)) { _ in
                             Text(session.startedAt, style: .timer)
@@ -171,6 +171,7 @@ private struct AgentSessionRow: View {
         case .needsAttention: .orange
         case .finished: .green
         case .failed: .red
+        case .ended: .secondary
         case .paused: .secondary
         }
     }
