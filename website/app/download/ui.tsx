@@ -3,11 +3,9 @@ import { FormEvent, useEffect, useState } from "react";
 
 export default function DownloadClient({
   token,
-  sessionId,
   checkoutStatus
 }: {
   token: string;
-  sessionId: string;
   checkoutStatus: string;
 }) {
   const [state, setState] = useState<"checking"|"paid"|"unpaid">("checking");
@@ -19,14 +17,10 @@ export default function DownloadClient({
 
     async function check() {
       for (let attempt = 0; attempt < 8 && !cancelled; attempt++) {
-        const params = new URLSearchParams();
-        if (token) params.set("token", token);
-        else if (sessionId) params.set("session_id", sessionId);
-
-        const response = await fetch(
-          `/api/access/status${params.size ? `?${params.toString()}` : ""}`,
-          { cache: "no-store" }
-        );
+        const query = token ? `?token=${encodeURIComponent(token)}` : "";
+        const response = await fetch(`/api/access/status${query}`, {
+          cache: "no-store"
+        });
         const data = await response.json();
 
         if (data.paid) {
@@ -44,7 +38,7 @@ export default function DownloadClient({
 
     check();
     return () => { cancelled = true; };
-  }, [token, sessionId]);
+  }, [token]);
 
   async function requestLink(event: FormEvent) {
     event.preventDefault();
@@ -94,7 +88,7 @@ export default function DownloadClient({
                 required
                 autoComplete="email"
                 value={email}
-                onChange={e => setEmail(e.target.value)}
+                onChange={e=>setEmail(e.target.value)}
                 placeholder="you@example.com"
               />
               <button className="primary" type="submit">Email access link</button>
