@@ -17,7 +17,7 @@ export async function GET(request: Request) {
     if (!release) return NextResponse.json({ error: "No signed release is published yet." }, { status: 503 });
 
     await analyticsEvent("download_started", crypto.randomUUID(), purchase.id, release.version);
-    return NextResponse.redirect(await privateDownloadURL(release.storage_object), { status: 302 });
+    return NextResponse.redirect(await privateDownloadURL(release.storage_object), {\n      status: 302,\n      headers: {\n        "Cache-Control": "no-store, private",\n        "Referrer-Policy": "no-referrer",\n        "X-Content-Type-Options": "nosniff"\n      }\n    });
   } catch (error) {
     console.error("download_failed", error);
     return NextResponse.json({ error: "Download is temporarily unavailable." }, { status: 503 });
