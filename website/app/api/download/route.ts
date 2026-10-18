@@ -11,14 +11,14 @@ export async function GET(request: Request) {
     const purchase = access
       ? await purchaseByEmail(access.email)
       : sessionId ? await purchaseByCheckoutSession(sessionId) : null;
-    if (!purchase) return NextResponse.json({ error: "Purchase access required." }, { status: 403 });
+    if (!purchase) return NextResponse.json({ error: "Purchase access required." }, { status: 403, headers: { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
 
     const release = await currentRelease();
-    if (!release) return NextResponse.json({ error: "No signed release is published yet." }, { status: 503 });
+    if (!release) return NextResponse.json({ error: "No signed release is published yet." }, { status: 503, headers: { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
 
     await analyticsEvent("download_started", crypto.randomUUID(), purchase.id, release.version);
     return NextResponse.redirect(await privateDownloadURL(release.storage_object), {
-      status: 302,
+      status: 303,
       headers: {
         "Cache-Control": "no-store, private",
         "Referrer-Policy": "no-referrer",
