@@ -1,41 +1,68 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 
+type AgentState = "Working" | "Waiting" | "Needs attention" | "Finished";
+
 type DemoState = {
   label: string;
-  claude: "Working" | "Needs attention" | "Finished";
-  codex: "Working" | "Finished";
+  title: string;
   detail: string;
-  mode: "monitor" | "attention" | "jump" | "done";
+  claude: AgentState;
+  claudeDetail: string;
+  codex: AgentState;
+  codexDetail: string;
+  mode: "monitor" | "waiting" | "attention" | "jump" | "done";
 };
 
 const demoStates: DemoState[] = [
   {
-    label: "Monitor",
+    label: "Working",
+    title: "Both agents are moving.",
+    detail: "The notch stays quiet while your sessions work in the background.",
     claude: "Working",
+    claudeDetail: "Using a tool · 00:24",
     codex: "Working",
-    detail: "Implementing secure download",
+    codexDetail: "Process running · 02:18",
     mode: "monitor"
   },
   {
-    label: "Attention",
-    claude: "Needs attention",
+    label: "Waiting",
+    title: "See when work pauses.",
+    detail: "Claude is waiting for input. Codex can keep running.",
+    claude: "Waiting",
+    claudeDetail: "Waiting for input",
     codex: "Working",
-    detail: "Claude is waiting for permission",
+    codexDetail: "Process running · 02:18",
+    mode: "waiting"
+  },
+  {
+    label: "Needs you",
+    title: "The notch calls you back.",
+    detail: "A permission request gets priority, so you don't miss the moment you're needed.",
+    claude: "Needs attention",
+    claudeDetail: "Waiting for permission",
+    codex: "Working",
+    codexDetail: "Process running · 02:18",
     mode: "attention"
   },
   {
     label: "Jump back",
+    title: "Return to the right terminal.",
+    detail: "In the Mac app, Open focuses the source terminal when it can identify it.",
     claude: "Working",
+    claudeDetail: "Session resumed",
     codex: "Working",
-    detail: "Permission granted. Work resumed.",
+    codexDetail: "Process running · 02:18",
     mode: "jump"
   },
   {
     label: "Done",
+    title: "Then it gets quiet again.",
+    detail: "Finished and failed sessions are recorded in your local history.",
     claude: "Finished",
+    claudeDetail: "Session ended",
     codex: "Finished",
-    detail: "Both sessions finished",
+    codexDetail: "Completed",
     mode: "done"
   }
 ];
@@ -54,35 +81,80 @@ function track(event: string) {
   }
 }
 
-function StatusDot({ status }: { status: DemoState["claude"] | DemoState["codex"] }) {
-  const kind = status === "Needs attention" ? "attention" : status === "Finished" ? "done" : "working";
-  return <span className={`status-dot ${kind}`} aria-hidden="true" />;
+function StatusDot({ status }: { status: AgentState }) {
+  const kind =
+    status === "Needs attention" ? "attention" :
+    status === "Finished" ? "done" :
+    status === "Waiting" ? "waiting" : "working";
+  return <span className={"status-dot " + kind} aria-hidden="true" />;
 }
 
 function ProductDemo() {
   const [step, setStep] = useState(0);
+  const [playing, setPlaying] = useState(true);
+  const [manualExpanded, setManualExpanded] = useState<boolean | null>(null);
   const played = useRef(false);
+  const state = demoStates[step];
+  const expanded = manualExpanded ?? (state.mode === "attention");
 
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      setStep(value => {
-        if (!played.current) {
-          played.current = true;
-          track("demo_played");
-        }
-        return (value + 1) % demoStates.length;
-      });
-    }, 2400);
-    return () => window.clearInterval(timer);
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setPlaying(false);
+    }
   }, []);
 
-  const state = demoStates[step];
+  useEffect(() => {
+    if (!playing) return;
+    const timer = window.setInterval(() => {
+      setStep(value => (value + 1) % demoStates.length);
+      setManualExpanded(null);
+      if (!played.current) {
+        played.current = true;
+        track("demo_played");
+      }
+    }, 4200);
+    return () => window.clearInterval(timer);
+  }, [playing]);
+
+  function chooseStep(index: number) {
+    setStep(index);
+    setManualExpanded(null);
+    setPlaying(false);
+    if (!played.current) {
+      played.current = true;
+      track("demo_played");
+    }
+  }
+
+  function openAgentPreview() {
+    setStep(3);
+    setManualExpanded(false);
+    setPlaying(false);
+    if (!played.current) {
+      played.current = true;
+      track("demo_played");
+    }
+  }
+
+  function togglePlayback() {
+    setPlaying(value => !value);
+    if (!played.current) {
+      played.current = true;
+      track("demo_played");
+    }
+  }
 
   return (
-    <div className="product-demo" data-mode={state.mode} aria-label="Animated NotchSignal product demo">
-      <div className="demo-copy">
-        <div className="demo-kicker">Live product walkthrough</div>
-        <h2>{state.mode === "monitor" && "Your agents keep working."}{state.mode === "attention" && "The notch asks when you’re needed."}{state.mode === "jump" && "Jump back to the right terminal."}{state.mode === "done" && "Then it gets quiet again."}</h2>
+    <div className="product-demo" data-mode={state.mode} aria-label="Interactive NotchSignal product preview">
+      <div className="demo-topline">
+        <div className="demo-kicker"><span className="preview-dot" /> Interactive product preview</div>
+        <button className="demo-play-toggle" type="button" onClick={togglePlayback} aria-pressed={playing}>
+          <span aria-hidden="true">{playing ? "Ⅱ" : "▶"}</span>{playing ? "Pause preview" : "Play preview"}
+        </button>
+      </div>
+
+      <div className="demo-copy" aria-live="polite">
+        <h2>{state.title}</h2>
         <p>{state.detail}</p>
       </div>
 
@@ -90,82 +162,96 @@ function ProductDemo() {
         <div className="macbook">
           <div className="macbook-screen">
             <div className="screen-menubar">
-              <span className="apple-mark">●</span>
-              <span>Finder</span>
+              <span className="apple-mark" aria-hidden="true">●</span>
+              <strong>Finder</strong>
+              <span>File</span><span>Edit</span><span>View</span><span>Go</span><span>Window</span>
               <div className="menubar-spacer" />
+              <span className="menubar-status">Wi-Fi&nbsp; ◖&nbsp; ◉</span>
               <span>9:41</span>
             </div>
 
             <div className="camera-notch" aria-hidden="true"><span /></div>
-
             <div className="wallpaper-orb orb-one" />
             <div className="wallpaper-orb orb-two" />
+            <div className="wallpaper-ribbon" aria-hidden="true" />
 
             <div className="terminal-window terminal-left">
-              <div className="terminal-title"><span className="traffic red" /><span className="traffic amber" /><span className="traffic green" /><b>claude</b></div>
+              <div className="terminal-title"><span className="traffic red" /><span className="traffic amber" /><span className="traffic green" /><b>Claude Code — Terminal</b><span className="window-state">zsh</span></div>
               <div className="terminal-body">
-                <p><span className="prompt">›</span> Build the release payment flow</p>
-                <p className="muted-line">Editing website/app/api/download/route.ts</p>
+                <p><span className="prompt">›</span> Review the app lifecycle events</p>
+                <p className="muted-line">Inspecting local project files…</p>
                 <p className={state.mode === "attention" ? "permission-line active-line" : "permission-line"}>
-                  {state.mode === "attention" ? "Allow command: npm run build?" : state.mode === "jump" ? "Permission allowed ✓" : state.mode === "done" ? "Finished ✓" : "Running tests…"}
+                  {state.mode === "attention" ? "Permission required · waiting for you" :
+                    state.mode === "waiting" ? "Waiting for input…" :
+                    state.mode === "jump" ? "Back in the source terminal ✓" :
+                    state.mode === "done" ? "Session ended ✓" : "Working · last event 2s ago"}
                 </p>
+                <div className="terminal-progress"><span style={{ width: state.mode === "done" ? "100%" : state.mode === "attention" ? "68%" : "42%" }} /></div>
               </div>
             </div>
 
             <div className="terminal-window terminal-right">
-              <div className="terminal-title"><span className="traffic red" /><span className="traffic amber" /><span className="traffic green" /><b>codex</b></div>
+              <div className="terminal-title"><span className="traffic red" /><span className="traffic amber" /><span className="traffic green" /><b>Codex — Terminal</b><span className="window-state">zsh</span></div>
               <div className="terminal-body">
-                <p><span className="prompt">›</span> Verify checkout and release gate</p>
-                <p className="muted-line">Running web build + API checks</p>
-                <p>{state.codex === "Finished" ? "Checks passed ✓" : "Working…"}</p>
+                <p><span className="prompt">›</span> Run the regression checks</p>
+                <p className="muted-line">Checking changed files…</p>
+                <p className="permission-line">{state.codex === "Finished" ? "Checks finished ✓" : "Process running · local"}</p>
+                <div className="terminal-progress"><span style={{ width: state.codex === "Finished" ? "100%" : "57%" }} /></div>
               </div>
             </div>
 
-            <div className={`notch-island ${state.mode === "attention" ? "is-expanded" : ""}`}>
-              <div className="island-compact">
-                <div><StatusDot status={state.claude} /><b>Claude</b></div>
-                <span className="island-divider" />
-                <strong>{state.claude}</strong>
-              </div>
+            <div className={"notch-island " + (expanded ? "is-expanded" : "")}>
+              <button
+                className="island-trigger"
+                type="button"
+                aria-label={expanded ? "Collapse agent activity preview" : "Expand agent activity preview"}
+                aria-expanded={expanded}
+                onClick={() => setManualExpanded(!expanded)}
+              >
+                <span className="island-compact">
+                  <span className="island-agent"><StatusDot status={state.claude} /><b>Claude Code</b></span>
+                  <span className="island-divider" />
+                  <strong>{state.claude}</strong>
+                  <span className="island-chevron" aria-hidden="true">{expanded ? "⌃" : "⌄"}</span>
+                </span>
+              </button>
 
               <div className="agent-popover">
                 <div className="popover-head">
-                  <div><b>Agents</b><span>{state.mode === "done" ? "2 done" : "2 active"}</span></div>
-                  <span className="local-pill">Local</span>
+                  <div><b>Agents</b><span>{state.mode === "done" ? "0 active · 2 done" : "2 sessions"}</span></div>
+                  <span className="local-pill"><i /> Local</span>
                 </div>
                 <div className="demo-agent-row">
                   <StatusDot status={state.claude} />
-                  <div className="agent-copy"><b>Claude Code</b><span>NotchSignal · {state.claude}</span></div>
-                  {state.mode === "attention" && <button type="button" tabIndex={-1}>Open Terminal</button>}
-                  {state.mode === "jump" && <span className="row-tag">Opened</span>}
+                  <div className="agent-copy"><b>Claude Code</b><span>NotchSignal · {state.claudeDetail}</span></div>
+                  {state.claude !== "Finished" && state.mode !== "jump" && <button className="open-agent" type="button" onClick={openAgentPreview}>Open</button>}
+                  {state.mode === "jump" && <span className="row-tag">Focused</span>}
+                  {state.claude === "Finished" && <span className="row-tag done-tag">Done</span>}
                 </div>
                 <div className="demo-agent-row">
                   <StatusDot status={state.codex} />
-                  <div className="agent-copy"><b>Codex</b><span>website · {state.codex}</span></div>
+                  <div className="agent-copy"><b>Codex</b><span>Workspace · {state.codexDetail}</span></div>
+                  {state.codex !== "Finished" && <button className="open-agent" type="button" onClick={openAgentPreview}>Open</button>}
+                  {state.codex === "Finished" && <span className="row-tag done-tag">Done</span>}
                 </div>
+                <div className="popover-footer"><span>↻ Refreshed locally every 5 seconds</span><span>No prompt content stored</span></div>
               </div>
             </div>
 
-            <div className="demo-cursor" aria-hidden="true">↖</div>
             <div className="focus-ring" aria-hidden="true" />
+            <div className="desktop-dock" aria-hidden="true"><i>◉</i><i>▣</i><i>⌘</i><i>♫</i><i>⚙</i><span /></div>
           </div>
           <div className="macbook-lip"><span /></div>
         </div>
       </div>
 
-      <div className="demo-steps" role="tablist" aria-label="Demo steps">
+      <div className="demo-steps" role="tablist" aria-label="Choose an agent state">
         {demoStates.map((item, index) => (
           <button
             key={item.label}
             type="button"
             className={index === step ? "demo-step active" : "demo-step"}
-            onClick={() => {
-              setStep(index);
-              if (!played.current) {
-                played.current = true;
-                track("demo_played");
-              }
-            }}
+            onClick={() => chooseStep(index)}
             aria-selected={index === step}
             role="tab"
           >
@@ -173,6 +259,7 @@ function ProductDemo() {
           </button>
         ))}
       </div>
+      <p className="demo-hint">{playing ? "Preview advances automatically · select a state to explore it yourself" : "Paused · select any state, or play the preview again"}</p>
     </div>
   );
 }
